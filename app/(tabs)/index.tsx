@@ -7,8 +7,8 @@ import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useTheme } from '../context/ThemeContext';
-import { useMusic, Song } from '../context/MusicContext';
+import { useTheme } from '../_context/ThemeContext';
+import { useMusic, Song } from '../_context/MusicContext';
 
 const STORAGE_KEY = '@my_songs_list';
 

@@ -2,7 +2,7 @@ import React from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, ScrollView, Switch, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useTheme } from '../context/ThemeContext'; 
+import { useTheme } from '../_context/ThemeContext'; 
 
 export default function Settings() {
   const router = useRouter();

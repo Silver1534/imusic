@@ -1,5 +1,5 @@
 import { Stack } from 'expo-router';
-import { ThemeProvider } from './context/ThemeContext'; // Vérifie bien le chemin
+import { ThemeProvider } from './_context/ThemeContext'; // Vérifie bien le chemin
 
 export default function RootLayout() {
   return (

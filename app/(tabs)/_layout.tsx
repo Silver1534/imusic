@@ -3,8 +3,8 @@ import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, View, Text, TouchableOpacity, Modal, useWindowDimensions, Platform } from 'react-native';
 import Slider from '@react-native-community/slider';
-import { MusicProvider, useMusic } from '../context/MusicContext';
-import { ThemeProvider, useTheme } from '../context/ThemeContext';
+import { MusicProvider, useMusic } from '../_context/MusicContext';
+import { ThemeProvider, useTheme } from '../_context/ThemeContext';
 
 const formatTime = (millis: number) => {
   const min = Math.floor(millis / 60000);
