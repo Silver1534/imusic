@@ -1,27 +1,17 @@
 import React, { useState } from 'react';
 import { 
   StyleSheet, View, TextInput, TouchableOpacity, Text, 
-  KeyboardAvoidingView, Platform, ActivityIndicator, Animated 
+  KeyboardAvoidingView, Platform, ActivityIndicator, useWindowDimensions 
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import * as Animatable from 'react-native-animatable';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
-
-  const scaleValue = new Animated.Value(1);
-
-  const onPressIn = () => {
-    Animated.spring(scaleValue, { toValue: 0.9, useNativeDriver: true }).start();
-  };
-
-  const onPressOut = () => {
-    Animated.spring(scaleValue, { toValue: 1, friction: 3, useNativeDriver: true }).start();
-  };
+  const { width } = useWindowDimensions();
 
   const handleLogin = () => {
     setIsLoading(true);
@@ -40,7 +30,7 @@ export default function LoginScreen() {
         <Ionicons name="arrow-back" size={24} color="#45644A" />
       </TouchableOpacity>
 
-      <View style={styles.inner}>
+      <View style={[styles.inner, { width: width > 500 ? 450 : '100%', alignSelf: 'center' }]}>
         <Text style={styles.title}>Connexion</Text>
         
         <TextInput
@@ -70,22 +60,8 @@ export default function LoginScreen() {
           {isLoading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.buttonText}>Se connecter</Text>}
         </TouchableOpacity>
 
-        <TouchableOpacity 
-          onPressIn={onPressIn}
-          onPressOut={onPressOut}
-          onPress={() => router.push('/(auth)/register')}
-          activeOpacity={1}
-        >
-          <Animated.View style={{ transform: [{ scale: scaleValue }] }}>
-            <Animatable.Text 
-              animation="pulse" 
-              iterationCount="infinite" 
-              duration={2000} 
-              style={styles.linkText}
-            >
-              Pas de compte ? S'inscrire
-            </Animatable.Text>
-          </Animated.View>
+        <TouchableOpacity onPress={() => router.push('/(auth)/register')}>
+          <Text style={styles.linkText}>Pas de compte ? S'inscrire</Text>
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>

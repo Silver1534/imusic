@@ -1,14 +1,24 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, useWindowDimensions } from 'react-native';
 
 export default function TabLayout() {
+  const { width } = useWindowDimensions();
+  const isLargeScreen = width > 768; // Détecte si c'est une tablette
+
   return (
     <Tabs screenOptions={{
       headerShown: false,
       tabBarShowLabel: false,
-      tabBarStyle: styles.tabBar,
+      tabBarStyle: [
+        styles.tabBar,
+        { 
+          // Largeur fixe sur tablette, pleine largeur moins marges sur téléphone
+          width: isLargeScreen ? 400 : width - 40, 
+          left: isLargeScreen ? (width - 400) / 2 : 20,
+        }
+      ],
       tabBarActiveTintColor: '#45644A',
       tabBarInactiveTintColor: '#A0A0A0',
     }}>
@@ -24,10 +34,16 @@ export default function TabLayout() {
 
 const styles = StyleSheet.create({
   tabBar: {
-    position: 'absolute', bottom: 25, left: 20, right: 20,
-    backgroundColor: '#FFFFFF', borderRadius: 25, height: 65,
-    elevation: 5, borderTopWidth: 0,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.1, shadowRadius: 10,
+    position: 'absolute', 
+    bottom: 25, 
+    borderRadius: 25, 
+    height: 65,
+    elevation: 5, 
+    borderTopWidth: 0,
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000', 
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.1, 
+    shadowRadius: 10,
   }
 });
