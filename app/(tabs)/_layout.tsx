@@ -5,7 +5,7 @@ import { StyleSheet, useWindowDimensions } from 'react-native';
 
 export default function TabLayout() {
   const { width } = useWindowDimensions();
-  const isLargeScreen = width > 768; // Détecte si c'est une tablette
+  const isLargeScreen = width > 768;
 
   return (
     <Tabs screenOptions={{
@@ -14,7 +14,6 @@ export default function TabLayout() {
       tabBarStyle: [
         styles.tabBar,
         { 
-          // Largeur fixe sur tablette, pleine largeur moins marges sur téléphone
           width: isLargeScreen ? 400 : width - 40, 
           left: isLargeScreen ? (width - 400) / 2 : 20,
         }
@@ -34,16 +33,9 @@ export default function TabLayout() {
 
 const styles = StyleSheet.create({
   tabBar: {
-    position: 'absolute', 
-    bottom: 25, 
-    borderRadius: 25, 
-    height: 65,
-    elevation: 5, 
-    borderTopWidth: 0,
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000', 
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.1, 
-    shadowRadius: 10,
+    position: 'absolute', bottom: 25, borderRadius: 25, height: 65,
+    backgroundColor: '#FFFFFF', elevation: 5, borderTopWidth: 0,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.1, shadowRadius: 10,
   }
 });

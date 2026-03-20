@@ -1,6 +1,5 @@
 import React, { createContext, useState, useContext } from 'react';
 
-// Définition du type pour le contexte
 type ThemeContextType = {
   isDarkMode: boolean;
   toggleTheme: () => void;
@@ -13,7 +12,6 @@ const ThemeContext = createContext<ThemeContextType>({
 
 export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
   const [isDarkMode, setIsDarkMode] = useState(false);
-
   const toggleTheme = () => setIsDarkMode(!isDarkMode);
 
   return (
