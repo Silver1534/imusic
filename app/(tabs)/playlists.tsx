@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   StyleSheet, View, Text, ScrollView, TouchableOpacity,
   Alert, Modal, TextInput, StatusBar, useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from 'expo-router';
 import { useTheme } from '../_context/ThemeContext';
 import { useMusic, Song, Playlist } from '../_context/MusicContext';
 
@@ -25,17 +26,25 @@ export default function PlaylistsScreen() {
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [renameTarget, setRenameTarget] = useState<Playlist | null>(null);
 
-  React.useEffect(() => {
-    loadSongs();
-  }, []);
+  // ✅ Recharge les chansons à chaque fois que l'écran est affiché
+  useFocusEffect(
+    useCallback(() => {
+      loadSongs();
+    }, [])
+  );
 
   const loadSongs = async () => {
     try {
       const saved = await AsyncStorage.getItem(STORAGE_KEY);
-      if (saved) setAllSongs(JSON.parse(saved));
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) setAllSongs(parsed);
+      }
     } catch (e) { console.error(e); }
   };
 
+  // ✅ Utilise directement playlist.songIds.length pour le comptage
+  // (source de vérité = MusicContext, pas allSongs)
   const getSongsForPlaylist = (playlist: Playlist): Song[] => {
     return playlist.songIds
       .map(id => allSongs.find(s => s.id === id))
@@ -97,8 +106,11 @@ export default function PlaylistsScreen() {
 
   // Vue détail playlist
   if (selectedPlaylist) {
+    // ✅ On récupère TOUJOURS les données fraîches depuis le contexte
     const currentPlaylistData = playlists.find(p => p.id === selectedPlaylist.id);
     const songs = currentPlaylistData ? getSongsForPlaylist(currentPlaylistData) : [];
+    // ✅ Comptage réel depuis le contexte
+    const realSongCount = currentPlaylistData?.songIds.length ?? 0;
 
     return (
       <View style={[styles.container, isDarkMode && styles.bgDark]}>
@@ -112,7 +124,7 @@ export default function PlaylistsScreen() {
             <Text style={[styles.detailTitle, isDarkMode && styles.textWhite]} numberOfLines={1}>
               {selectedPlaylist.name}
             </Text>
-            <Text style={styles.subTitle}>{songs.length} titre{songs.length !== 1 ? 's' : ''}</Text>
+            <Text style={styles.subTitle}>{realSongCount} titre{realSongCount !== 1 ? 's' : ''}</Text>
           </View>
           <TouchableOpacity
             onPress={() => handlePlayPlaylist(selectedPlaylist)}
@@ -195,7 +207,8 @@ export default function PlaylistsScreen() {
           </View>
         ) : (
           playlists.map(playlist => {
-            const songs = getSongsForPlaylist(playlist);
+            // ✅ Comptage depuis songIds du contexte (source de vérité)
+            const songCount = Array.isArray(playlist.songIds) ? playlist.songIds.length : 0;
             return (
               <TouchableOpacity
                 key={playlist.id}
@@ -211,7 +224,7 @@ export default function PlaylistsScreen() {
                     {playlist.name}
                   </Text>
                   <Text style={styles.playlistCount}>
-                    {songs.length} titre{songs.length !== 1 ? 's' : ''}
+                    {songCount} titre{songCount !== 1 ? 's' : ''}
                   </Text>
                 </View>
                 <View style={styles.playlistActions}>

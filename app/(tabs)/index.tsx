@@ -135,7 +135,7 @@ export default function MusicIndex() {
     setNewPlaylistName('');
   };
 
-  // ── Créer la playlist ET ajouter la chanson directement ──
+  // ── ✅ FIX : Créer la playlist ET ajouter la chanson avec le même ID connu ──
   const handleCreateAndAdd = () => {
     const name = newPlaylistName.trim();
     if (!name) {
@@ -144,23 +144,20 @@ export default function MusicIndex() {
     }
     if (!playlistModalSong) return;
 
-    createPlaylist(name);
+    // On génère l'ID ici, AVANT la création, pour qu'il soit le même partout
+    const newId = Date.now().toString();
 
-    // On attend un tick pour que le state se mette à jour
-    setTimeout(() => {
-      // On récupère la playlist fraîchement créée via le contexte
-      // Elle sera forcément la dernière ajoutée
-      const updatedPlaylists = music?.playlists ?? [];
-      const created = updatedPlaylists[updatedPlaylists.length - 1];
-      if (created) {
-        addSongToPlaylist(created.id, playlistModalSong.id);
-      }
-      closePlaylistModal();
-      Alert.alert(
-        '✓ Playlist créée',
-        `"${playlistModalSong.title}" a été ajouté à "${name}".`
-      );
-    }, 80);
+    // On crée la playlist avec cet ID connu
+    createPlaylist(name, newId);
+
+    // On ajoute la chanson immédiatement avec le même ID — pas de setTimeout !
+    addSongToPlaylist(newId, playlistModalSong.id);
+
+    closePlaylistModal();
+    Alert.alert(
+      '✓ Playlist créée',
+      `"${playlistModalSong.title}" a été ajouté à "${name}".`
+    );
   };
 
   const filteredSongs = songs.filter(s => {

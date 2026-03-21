@@ -31,7 +31,7 @@ interface MusicContextType {
   toggleFavorite: (songId: string) => void;
   isFavorite: (songId: string) => boolean;
   playlists: Playlist[];
-  createPlaylist: (name: string) => void;
+  createPlaylist: (name: string, id?: string) => void;
   deletePlaylist: (playlistId: string) => void;
   addSongToPlaylist: (playlistId: string, songId: string) => void;
   removeSongFromPlaylist: (playlistId: string, songId: string) => void;
@@ -151,8 +151,13 @@ export const MusicProvider = ({ children }: { children: ReactNode }) => {
 
   const isFavorite = (songId: string) => favorites.includes(songId);
 
-  const createPlaylist = (name: string) => {
-    const newP: Playlist = { id: Date.now().toString(), name, songIds: [] };
+  // ✅ createPlaylist accepte un id optionnel pour éviter les problèmes de timing
+  const createPlaylist = (name: string, id?: string) => {
+    const newP: Playlist = {
+      id: id ?? Date.now().toString(),
+      name,
+      songIds: [],
+    };
     setPlaylists(prev => {
       const updated = [...prev, newP];
       savePlaylists(updated);
