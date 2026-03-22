@@ -1,6 +1,8 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+// app/_context/MusicContext.tsx
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { Audio, AVPlaybackStatus } from 'expo-av';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system';
 
 export interface Song {
   id: string;
@@ -15,21 +17,27 @@ export interface Playlist {
 }
 
 interface MusicContextType {
+  // Songs — source de vérité unique
+  songs: Song[];
+  addSong: (song: Song) => Promise<void>;
+  deleteSong: (songId: string) => Promise<void>;
+  // Playback
   playingSong: Song | null;
   isPlaying: boolean;
   isFullPlayerVisible: boolean;
   setIsFullPlayerVisible: (visible: boolean) => void;
   handlePlayPause: (song: Song, playlist?: Song[]) => Promise<void>;
-  updatePlaylist: (newList: Song[]) => void;
   playNext: () => void;
   playPrevious: () => void;
   stopAndReset: () => Promise<void>;
   position: number;
   duration: number;
   seek: (value: number) => Promise<void>;
+  // Favoris
   favorites: string[];
   toggleFavorite: (songId: string) => void;
   isFavorite: (songId: string) => boolean;
+  // Playlists
   playlists: Playlist[];
   createPlaylist: (name: string, id?: string) => void;
   deletePlaylist: (playlistId: string) => void;
@@ -38,14 +46,27 @@ interface MusicContextType {
   renamePlaylist: (playlistId: string, newName: string) => void;
 }
 
-// ✅ Valeur par défaut complète — jamais undefined
+const SONGS_KEY     = '@my_songs_list';
+const FAVORITES_KEY = '@favorites';
+const PLAYLISTS_KEY = '@playlists';
+
+function sanitizePlaylist(p: any): Playlist {
+  return {
+    id: String(p?.id ?? Date.now()),
+    name: String(p?.name ?? 'Sans nom'),
+    songIds: Array.isArray(p?.songIds) ? p.songIds : [],
+  };
+}
+
 const defaultContext: MusicContextType = {
+  songs: [],
+  addSong: async () => {},
+  deleteSong: async () => {},
   playingSong: null,
   isPlaying: false,
   isFullPlayerVisible: false,
   setIsFullPlayerVisible: () => {},
   handlePlayPause: async () => {},
-  updatePlaylist: () => {},
   playNext: () => {},
   playPrevious: () => {},
   stopAndReset: async () => {},
@@ -65,102 +86,159 @@ const defaultContext: MusicContextType = {
 
 const MusicContext = createContext<MusicContextType>(defaultContext);
 
-const FAVORITES_KEY = '@favorites';
-const PLAYLISTS_KEY = '@playlists';
-
-// ✅ Nettoie une playlist corrompue (sans songIds)
-function sanitizePlaylist(p: any): Playlist {
-  return {
-    id: String(p?.id ?? Date.now()),
-    name: String(p?.name ?? 'Sans nom'),
-    songIds: Array.isArray(p?.songIds) ? p.songIds : [],
-  };
-}
-
 export const MusicProvider = ({ children }: { children: ReactNode }) => {
-  const [playingSong, setPlayingSong] = useState<Song | null>(null);
-  const [sound, setSound] = useState<Audio.Sound | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
+  const [songs, setSongs]           = useState<Song[]>([]);
+  const [sound, setSound]           = useState<Audio.Sound | null>(null);
+  const [isPlaying, setIsPlaying]   = useState(false);
   const [isFullPlayerVisible, setIsFullPlayerVisible] = useState(false);
+  const [playingSong, setPlayingSong] = useState<Song | null>(null);
   const [currentPlaylist, setCurrentPlaylist] = useState<Song[]>([]);
-  const [position, setPosition] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [favorites, setFavorites] = useState<string[]>([]);
-  const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [position, setPosition]     = useState(0);
+  const [duration, setDuration]     = useState(0);
+  const [favorites, setFavorites]   = useState<string[]>([]);
+  const [playlists, setPlaylists]   = useState<Playlist[]>([]);
+
+  // Ref pour accéder aux valeurs courantes sans capturer des closures périmées
+  const playingSongRef    = useRef<Song | null>(null);
+  const currentPlaylistRef = useRef<Song[]>([]);
+  playingSongRef.current    = playingSong;
+  currentPlaylistRef.current = currentPlaylist;
 
   useEffect(() => {
-    loadFavorites();
-    loadPlaylists();
+    loadAll();
+    return () => {
+      // Nettoyage au démontage
+      sound?.unloadAsync();
+    };
   }, []);
 
-  const loadFavorites = async () => {
+  const loadAll = async () => {
     try {
-      const saved = await AsyncStorage.getItem(FAVORITES_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        setFavorites(Array.isArray(parsed) ? parsed : []);
-      }
-    } catch (e) {
-      console.error('Erreur chargement favoris', e);
-      setFavorites([]);
-    }
-  };
+      const [savedSongs, savedFavs, savedPlaylists] = await Promise.all([
+        AsyncStorage.getItem(SONGS_KEY),
+        AsyncStorage.getItem(FAVORITES_KEY),
+        AsyncStorage.getItem(PLAYLISTS_KEY),
+      ]);
 
-  const loadPlaylists = async () => {
-    try {
-      const saved = await AsyncStorage.getItem(PLAYLISTS_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          // ✅ Nettoie chaque playlist au chargement
-          const clean = parsed.map(sanitizePlaylist);
-          setPlaylists(clean);
-          // ✅ Resauvegarde les données nettoyées
-          await AsyncStorage.setItem(PLAYLISTS_KEY, JSON.stringify(clean));
-        } else {
-          setPlaylists([]);
-          await AsyncStorage.setItem(PLAYLISTS_KEY, '[]');
+      let parsedSongs: Song[] = [];
+      if (savedSongs) {
+        const arr = JSON.parse(savedSongs);
+        if (Array.isArray(arr)) parsedSongs = arr;
+      }
+      setSongs(parsedSongs);
+
+      let parsedFavs: string[] = [];
+      if (savedFavs) {
+        const arr = JSON.parse(savedFavs);
+        if (Array.isArray(arr)) {
+          // Nettoyage : garder seulement les favoris dont la song existe encore
+          const songIds = new Set(parsedSongs.map(s => s.id));
+          parsedFavs = arr.filter((id: string) => songIds.has(id));
         }
       }
+      setFavorites(parsedFavs);
+
+      let parsedPlaylists: Playlist[] = [];
+      if (savedPlaylists) {
+        const arr = JSON.parse(savedPlaylists);
+        if (Array.isArray(arr)) {
+          parsedPlaylists = arr.map(sanitizePlaylist);
+          // Nettoyage : retirer les songIds orphelins dans les playlists
+          const songIds = new Set(parsedSongs.map(s => s.id));
+          parsedPlaylists = parsedPlaylists.map(p => ({
+            ...p,
+            songIds: p.songIds.filter(id => songIds.has(id)),
+          }));
+        }
+      }
+      setPlaylists(parsedPlaylists);
+
+      // Resauvegarder les données nettoyées
+      await Promise.all([
+        AsyncStorage.setItem(FAVORITES_KEY, JSON.stringify(parsedFavs)),
+        AsyncStorage.setItem(PLAYLISTS_KEY, JSON.stringify(parsedPlaylists)),
+      ]);
     } catch (e) {
-      console.error('Erreur chargement playlists', e);
-      setPlaylists([]);
-      try { await AsyncStorage.setItem(PLAYLISTS_KEY, '[]'); } catch {}
+      console.error('Erreur chargement données', e);
     }
   };
 
-  const saveFavorites = async (data: string[]) => {
-    try { await AsyncStorage.setItem(FAVORITES_KEY, JSON.stringify(data)); }
-    catch (e) { console.error(e); }
+  // ── Songs ──────────────────────────────────────────────────────────────────
+
+  const addSong = async (song: Song) => {
+    setSongs(prev => {
+      const updated = [...prev, song];
+      AsyncStorage.setItem(SONGS_KEY, JSON.stringify(updated));
+      return updated;
+    });
   };
 
-  const savePlaylists = async (data: Playlist[]) => {
-    try { await AsyncStorage.setItem(PLAYLISTS_KEY, JSON.stringify(data)); }
-    catch (e) { console.error(e); }
+  const deleteSong = async (songId: string) => {
+    // 1. Arrêter la lecture si c'est la chanson en cours
+    if (playingSongRef.current?.id === songId) {
+      await stopAndReset();
+    }
+
+    // 2. Trouver l'URI avant de supprimer
+    let uriToDelete: string | undefined;
+    setSongs(prev => {
+      const song = prev.find(s => s.id === songId);
+      uriToDelete = song?.uri;
+      const updated = prev.filter(s => s.id !== songId);
+      AsyncStorage.setItem(SONGS_KEY, JSON.stringify(updated));
+      return updated;
+    });
+
+    // 3. Supprimer le fichier audio du disque
+    if (uriToDelete) {
+      try {
+        const info = await FileSystem.getInfoAsync(uriToDelete);
+        if (info.exists) {
+          await FileSystem.deleteAsync(uriToDelete, { idempotent: true });
+        }
+      } catch (e) {
+        console.warn('Impossible de supprimer le fichier audio', e);
+      }
+    }
+
+    // 4. Nettoyer favoris et playlists
+    setFavorites(prev => {
+      const updated = prev.filter(id => id !== songId);
+      AsyncStorage.setItem(FAVORITES_KEY, JSON.stringify(updated));
+      return updated;
+    });
+
+    setPlaylists(prev => {
+      const updated = prev.map(p => ({
+        ...p,
+        songIds: p.songIds.filter(id => id !== songId),
+      }));
+      AsyncStorage.setItem(PLAYLISTS_KEY, JSON.stringify(updated));
+      return updated;
+    });
   };
+
+  // ── Favoris ───────────────────────────────────────────────────────────────
 
   const toggleFavorite = (songId: string) => {
     setFavorites(prev => {
       const updated = prev.includes(songId)
         ? prev.filter(id => id !== songId)
         : [...prev, songId];
-      saveFavorites(updated);
+      AsyncStorage.setItem(FAVORITES_KEY, JSON.stringify(updated));
       return updated;
     });
   };
 
   const isFavorite = (songId: string) => favorites.includes(songId);
 
-  // ✅ createPlaylist accepte un id optionnel pour éviter les problèmes de timing
+  // ── Playlists ─────────────────────────────────────────────────────────────
+
   const createPlaylist = (name: string, id?: string) => {
-    const newP: Playlist = {
-      id: id ?? Date.now().toString(),
-      name,
-      songIds: [],
-    };
+    const newP: Playlist = { id: id ?? Date.now().toString(), name, songIds: [] };
     setPlaylists(prev => {
       const updated = [...prev, newP];
-      savePlaylists(updated);
+      AsyncStorage.setItem(PLAYLISTS_KEY, JSON.stringify(updated));
       return updated;
     });
   };
@@ -168,7 +246,7 @@ export const MusicProvider = ({ children }: { children: ReactNode }) => {
   const deletePlaylist = (id: string) => {
     setPlaylists(prev => {
       const updated = prev.filter(p => p.id !== id);
-      savePlaylists(updated);
+      AsyncStorage.setItem(PLAYLISTS_KEY, JSON.stringify(updated));
       return updated;
     });
   };
@@ -177,23 +255,20 @@ export const MusicProvider = ({ children }: { children: ReactNode }) => {
     setPlaylists(prev => {
       const updated = prev.map(p => {
         if (p.id !== playlistId) return p;
-        const ids = Array.isArray(p.songIds) ? p.songIds : [];
-        if (ids.includes(songId)) return p;
-        return { ...p, songIds: [...ids, songId] };
+        if (p.songIds.includes(songId)) return p;
+        return { ...p, songIds: [...p.songIds, songId] };
       });
-      savePlaylists(updated);
+      AsyncStorage.setItem(PLAYLISTS_KEY, JSON.stringify(updated));
       return updated;
     });
   };
 
   const removeSongFromPlaylist = (playlistId: string, songId: string) => {
     setPlaylists(prev => {
-      const updated = prev.map(p => {
-        if (p.id !== playlistId) return p;
-        const ids = Array.isArray(p.songIds) ? p.songIds : [];
-        return { ...p, songIds: ids.filter(id => id !== songId) };
-      });
-      savePlaylists(updated);
+      const updated = prev.map(p =>
+        p.id !== playlistId ? p : { ...p, songIds: p.songIds.filter(id => id !== songId) }
+      );
+      AsyncStorage.setItem(PLAYLISTS_KEY, JSON.stringify(updated));
       return updated;
     });
   };
@@ -203,52 +278,76 @@ export const MusicProvider = ({ children }: { children: ReactNode }) => {
       const updated = prev.map(p =>
         p.id === playlistId ? { ...p, name: newName } : p
       );
-      savePlaylists(updated);
+      AsyncStorage.setItem(PLAYLISTS_KEY, JSON.stringify(updated));
       return updated;
     });
   };
 
+  // ── Playback ──────────────────────────────────────────────────────────────
+
+  // Callback stable via ref — évite les closures périmées
   const onPlaybackStatusUpdate = (status: AVPlaybackStatus) => {
     if (status.isLoaded) {
       setPosition(status.positionMillis);
-      setDuration(status.durationMillis || 0);
-      if (status.didJustFinish) playNext();
+      setDuration(status.durationMillis ?? 0);
+      if (status.didJustFinish) {
+        // Utilise les refs pour avoir les valeurs courantes
+        const playlist = currentPlaylistRef.current;
+        const current  = playingSongRef.current;
+        if (!current || playlist.length === 0) return;
+        const idx = playlist.findIndex(s => s.id === current.id);
+        if (idx === -1) return;
+        loadAndPlay(playlist[(idx + 1) % playlist.length]);
+      }
     }
   };
 
-  const updatePlaylist = (newList: Song[]) => setCurrentPlaylist(newList);
+  const loadAndPlay = async (song: Song) => {
+    // Annuler le callback avant de décharger — évite les événements fantômes
+    if (sound) {
+      sound.setOnPlaybackStatusUpdate(null);
+      await sound.unloadAsync();
+    }
+    try {
+      const { sound: newSound } = await Audio.Sound.createAsync(
+        { uri: song.uri },
+        { shouldPlay: true }
+      );
+      newSound.setOnPlaybackStatusUpdate(onPlaybackStatusUpdate);
+      setSound(newSound);
+      setPlayingSong(song);
+      setIsPlaying(true);
+    } catch (e) {
+      console.error('Erreur lecture audio', e);
+      setPlayingSong(null);
+      setIsPlaying(false);
+    }
+  };
 
-  async function loadAndPlay(song: Song) {
-    if (sound) await sound.unloadAsync();
-    const { sound: newSound } = await Audio.Sound.createAsync(
-      { uri: song.uri },
-      { shouldPlay: true }
-    );
-    newSound.setOnPlaybackStatusUpdate(onPlaybackStatusUpdate);
-    setSound(newSound);
-    setPlayingSong(song);
-    setIsPlaying(true);
-  }
-
-  async function handlePlayPause(song: Song, playlist?: Song[]) {
+  const handlePlayPause = async (song: Song, playlist?: Song[]) => {
     if (playlist) setCurrentPlaylist(playlist);
     if (playingSong?.id === song.id && sound) {
       const status = await sound.getStatusAsync();
       if (status.isLoaded) {
         if (status.isPlaying) { await sound.pauseAsync(); setIsPlaying(false); }
-        else { await sound.playAsync(); setIsPlaying(true); }
+        else                  { await sound.playAsync();  setIsPlaying(true);  }
       }
     } else {
       await loadAndPlay(song);
     }
-  }
+  };
 
   const seek = async (value: number) => {
     if (sound) { await sound.setPositionAsync(value); setPosition(value); }
   };
 
   const stopAndReset = async () => {
-    if (sound) { await sound.stopAsync(); await sound.unloadAsync(); setSound(null); }
+    if (sound) {
+      sound.setOnPlaybackStatusUpdate(null);
+      await sound.stopAsync();
+      await sound.unloadAsync();
+      setSound(null);
+    }
     setPlayingSong(null);
     setIsPlaying(false);
     setPosition(0);
@@ -256,27 +355,32 @@ export const MusicProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const playNext = () => {
-    if (currentPlaylist.length === 0) return;
-    const idx = currentPlaylist.findIndex(s => s.id === playingSong?.id);
+    const playlist = currentPlaylistRef.current;
+    const current  = playingSongRef.current;
+    if (!current || playlist.length === 0) return;
+    const idx = playlist.findIndex(s => s.id === current.id);
     if (idx === -1) return;
-    loadAndPlay(currentPlaylist[(idx + 1) % currentPlaylist.length]);
+    loadAndPlay(playlist[(idx + 1) % playlist.length]);
   };
 
   const playPrevious = () => {
-    if (currentPlaylist.length === 0) return;
-    const idx = currentPlaylist.findIndex(s => s.id === playingSong?.id);
+    const playlist = currentPlaylistRef.current;
+    const current  = playingSongRef.current;
+    if (!current || playlist.length === 0) return;
+    const idx = playlist.findIndex(s => s.id === current.id);
     if (idx === -1) return;
-    loadAndPlay(currentPlaylist[idx <= 0 ? currentPlaylist.length - 1 : idx - 1]);
+    loadAndPlay(playlist[idx <= 0 ? playlist.length - 1 : idx - 1]);
   };
 
   return (
     <MusicContext.Provider value={{
+      songs, addSong, deleteSong,
       playingSong, isPlaying, isFullPlayerVisible, setIsFullPlayerVisible,
-      handlePlayPause, updatePlaylist, playNext, playPrevious, stopAndReset,
+      handlePlayPause, playNext, playPrevious, stopAndReset,
       position, duration, seek,
       favorites, toggleFavorite, isFavorite,
-      playlists, createPlaylist, deletePlaylist, addSongToPlaylist,
-      removeSongFromPlaylist, renamePlaylist,
+      playlists, createPlaylist, deletePlaylist,
+      addSongToPlaylist, removeSongFromPlaylist, renamePlaylist,
     }}>
       {children}
     </MusicContext.Provider>

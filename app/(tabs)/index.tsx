@@ -1,72 +1,42 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   StyleSheet, View, Text, ScrollView, TouchableOpacity,
-  Alert, useWindowDimensions, StatusBar, Modal, Animated,
+  Alert, StatusBar, Modal, Animated,
   TextInput, KeyboardAvoidingView, Platform, Keyboard,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../_context/ThemeContext';
 import { useMusic, Song } from '../_context/MusicContext';
 import { useSearch } from './_layout';
 
-const STORAGE_KEY = '@my_songs_list';
-
 export default function MusicIndex() {
-  const music = useMusic();
-  const handlePlayPause   = music?.handlePlayPause   ?? (async () => {});
-  const playingSong       = music?.playingSong        ?? null;
-  const stopAndReset      = music?.stopAndReset       ?? (async () => {});
-  const updatePlaylist    = music?.updatePlaylist     ?? (() => {});
-  const toggleFavorite    = music?.toggleFavorite     ?? (() => {});
-  const isFavorite        = music?.isFavorite         ?? (() => false);
-  const addSongToPlaylist = music?.addSongToPlaylist  ?? (() => {});
-  const createPlaylist    = music?.createPlaylist     ?? (() => {});
-  const rawPlaylists      = music?.playlists;
-  const playlists         = Array.isArray(rawPlaylists) ? rawPlaylists : [];
+  const {
+    songs,
+    addSong,
+    deleteSong,
+    handlePlayPause,
+    playingSong,
+    toggleFavorite,
+    isFavorite,
+    addSongToPlaylist,
+    createPlaylist,
+    playlists,
+  } = useMusic();
 
   const { isDarkMode } = useTheme();
-  const { width } = useWindowDimensions();
   const { searchQuery } = useSearch();
 
-  const [songs, setSongs] = useState<Song[]>([]);
   const [playlistModalSong, setPlaylistModalSong] = useState<Song | null>(null);
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const modalAnim = useRef(new Animated.Value(0)).current;
 
-  // ── État pour la création rapide de playlist ──
   const [showCreateInput, setShowCreateInput] = useState(false);
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const createInputAnim = useRef(new Animated.Value(0)).current;
 
-  useEffect(() => { loadSongs(); }, []);
-
-  const loadSongs = async () => {
-    try {
-      const saved = await AsyncStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) { setSongs(parsed); updatePlaylist(parsed); }
-      }
-    } catch (e) { console.error('Erreur chargement', e); }
-  };
-
-  const deleteSong = (id: string) => {
-    Alert.alert('Supprimer', 'Retirer ce titre de votre bibliothèque ?', [
-      { text: 'Annuler' },
-      {
-        text: 'Supprimer', style: 'destructive', onPress: async () => {
-          if (playingSong?.id === id) await stopAndReset();
-          const newList = songs.filter(s => s.id !== id);
-          setSongs(newList);
-          updatePlaylist(newList);
-          await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(newList));
-        }
-      }
-    ]);
-  };
+  // ── Import d'une chanson ──────────────────────────────────────────────────
 
   const pickSong = async () => {
     try {
@@ -74,23 +44,46 @@ export default function MusicIndex() {
       if (!result.canceled) {
         const asset = result.assets[0];
         const cleanTitle = asset.name.replace('.mp3', '');
+
         if (songs.some(s => s.title.toLowerCase() === cleanTitle.toLowerCase())) {
           Alert.alert('Doublon', 'Cette chanson est déjà présente.');
           return;
         }
+
         const fileName = `${Date.now()}_${asset.name}`;
         const dest = (FileSystem.documentDirectory || '') + fileName;
         await FileSystem.copyAsync({ from: asset.uri, to: dest });
-        const newSong: Song = { id: Date.now().toString(), title: cleanTitle, uri: dest };
-        const newList = [...songs, newSong];
-        setSongs(newList);
-        updatePlaylist(newList);
-        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(newList));
+
+        const newSong: Song = {
+          id: Date.now().toString(),
+          title: cleanTitle,
+          uri: dest,
+        };
+
+        await addSong(newSong);
       }
-    } catch (e) { Alert.alert('Erreur', "Impossible d'importer."); }
+    } catch {
+      Alert.alert('Erreur', "Impossible d'importer.");
+    }
   };
 
-  // ── Ouverture / fermeture du modal principal ──
+  // ── Suppression d'une chanson ─────────────────────────────────────────────
+  // Le contexte gère : arrêt lecture + suppression fichier disque
+  // + nettoyage favoris + nettoyage playlists
+
+  const handleDelete = (id: string) => {
+    Alert.alert('Supprimer', 'Retirer ce titre de votre bibliothèque ?', [
+      { text: 'Annuler' },
+      {
+        text: 'Supprimer',
+        style: 'destructive',
+        onPress: () => deleteSong(id),
+      },
+    ]);
+  };
+
+  // ── Modal ajout playlist ──────────────────────────────────────────────────
+
   const openPlaylistModal = (song: Song) => {
     setPlaylistModalSong(song);
     setShowCreateInput(false);
@@ -111,15 +104,13 @@ export default function MusicIndex() {
     });
   };
 
-  // ── Ajouter à une playlist existante ──
   const handleAddToPlaylist = (playlistId: string) => {
     if (!playlistModalSong) return;
     addSongToPlaylist(playlistId, playlistModalSong.id);
     closePlaylistModal();
-    Alert.alert('✓ Ajouté', `"${playlistModalSong.title}" ajouté à la playlist.`);
+    Alert.alert('Ajouté', `"${playlistModalSong.title}" ajouté à la playlist.`);
   };
 
-  // ── Afficher / masquer le champ de création ──
   const toggleCreateInput = () => {
     if (showCreateInput) {
       Keyboard.dismiss();
@@ -135,7 +126,6 @@ export default function MusicIndex() {
     setNewPlaylistName('');
   };
 
-  // ── ✅ FIX : Créer la playlist ET ajouter la chanson avec le même ID connu ──
   const handleCreateAndAdd = () => {
     const name = newPlaylistName.trim();
     if (!name) {
@@ -144,21 +134,15 @@ export default function MusicIndex() {
     }
     if (!playlistModalSong) return;
 
-    // On génère l'ID ici, AVANT la création, pour qu'il soit le même partout
     const newId = Date.now().toString();
-
-    // On crée la playlist avec cet ID connu
     createPlaylist(name, newId);
-
-    // On ajoute la chanson immédiatement avec le même ID — pas de setTimeout !
     addSongToPlaylist(newId, playlistModalSong.id);
 
     closePlaylistModal();
-    Alert.alert(
-      '✓ Playlist créée',
-      `"${playlistModalSong.title}" a été ajouté à "${name}".`
-    );
+    Alert.alert('Playlist créée', `"${playlistModalSong.title}" a été ajouté à "${name}".`);
   };
+
+  // ── Filtrage ──────────────────────────────────────────────────────────────
 
   const filteredSongs = songs.filter(s => {
     const matchSearch = s.title.toLowerCase().includes((searchQuery || '').toLowerCase());
@@ -168,7 +152,6 @@ export default function MusicIndex() {
 
   const favCount = songs.filter(s => isFavorite(s.id)).length;
 
-  // Hauteur animée du bloc de création
   const createBlockHeight = createInputAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [0, 110],
@@ -177,6 +160,8 @@ export default function MusicIndex() {
     inputRange: [0, 1],
     outputRange: [0, 1],
   });
+
+  // ── Rendu ─────────────────────────────────────────────────────────────────
 
   return (
     <View style={[styles.container, isDarkMode && styles.bgDark]}>
@@ -236,7 +221,10 @@ export default function MusicIndex() {
                   color="#45644A"
                 />
                 <View style={styles.songTextContainer}>
-                  <Text numberOfLines={1} style={[styles.songTitle, isDarkMode && styles.textWhite]}>
+                  <Text
+                    numberOfLines={1}
+                    style={[styles.songTitle, isDarkMode && styles.textWhite]}
+                  >
                     {item.title}
                   </Text>
                   <Text style={styles.songArtist}>Audio Importé</Text>
@@ -250,10 +238,20 @@ export default function MusicIndex() {
                     color={isFavorite(item.id) ? '#E05C5C' : isDarkMode ? '#888' : '#CCC'}
                   />
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => openPlaylistModal(item)} style={styles.actionBtn}>
-                  <Ionicons name="add-circle-outline" size={21} color={isDarkMode ? '#888' : '#CCC'} />
+                <TouchableOpacity
+                  onPress={() => openPlaylistModal(item)}
+                  style={styles.actionBtn}
+                >
+                  <Ionicons
+                    name="add-circle-outline"
+                    size={21}
+                    color={isDarkMode ? '#888' : '#CCC'}
+                  />
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => deleteSong(item.id)} style={styles.actionBtn}>
+                <TouchableOpacity
+                  onPress={() => handleDelete(item.id)}
+                  style={styles.actionBtn}
+                >
                   <Ionicons name="trash-outline" size={20} color="#FF4444" />
                 </TouchableOpacity>
               </View>
@@ -263,13 +261,17 @@ export default function MusicIndex() {
           <View style={styles.emptyState}>
             <Ionicons name="musical-notes-outline" size={70} color="#CCC" />
             <Text style={styles.emptyText}>
-              {searchQuery ? 'Aucun résultat' : showFavoritesOnly ? 'Aucun favori' : 'Aucune musique trouvée'}
+              {searchQuery
+                ? 'Aucun résultat'
+                : showFavoritesOnly
+                  ? 'Aucun favori'
+                  : 'Aucune musique trouvée'}
             </Text>
           </View>
         )}
       </ScrollView>
 
-      {/* ── Modal ajout playlist ── */}
+      {/* Modal ajout playlist */}
       <Modal
         visible={!!playlistModalSong}
         transparent
@@ -300,26 +302,32 @@ export default function MusicIndex() {
               ]}
             >
               <TouchableOpacity activeOpacity={1}>
-                {/* Handle */}
+
                 <View style={styles.modalHandle} />
 
-                {/* Titre + nom de la chanson */}
                 <Text style={[styles.modalTitle, isDarkMode && styles.textWhite]}>
                   Ajouter à une playlist
                 </Text>
+
                 <View style={styles.modalSongRow}>
                   <View style={styles.modalSongIcon}>
                     <Ionicons name="musical-note" size={16} color="#45644A" />
                   </View>
-                  <Text style={[styles.modalSongName, isDarkMode && { color: '#BBB' }]} numberOfLines={1}>
+                  <Text
+                    style={[styles.modalSongName, isDarkMode && { color: '#BBB' }]}
+                    numberOfLines={1}
+                  >
                     {playlistModalSong?.title}
                   </Text>
                 </View>
 
-                {/* ── CAS : aucune playlist ── */}
+                {/* Aucune playlist */}
                 {playlists.length === 0 ? (
                   <View style={styles.emptyPlaylistsBlock}>
-                    <View style={[styles.emptyIllustration, isDarkMode && { backgroundColor: '#2A2A2A' }]}>
+                    <View style={[
+                      styles.emptyIllustration,
+                      isDarkMode && { backgroundColor: '#2A2A2A' },
+                    ]}>
                       <Ionicons name="list" size={36} color="#45644A" />
                     </View>
                     <Text style={[styles.emptyPlaylistText, isDarkMode && styles.textWhite]}>
@@ -329,14 +337,16 @@ export default function MusicIndex() {
                       Créez votre première playlist pour organiser vos chansons
                     </Text>
 
-                    {/* Bloc création rapide */}
                     <Animated.View style={[
                       styles.createBlock,
                       isDarkMode && { backgroundColor: '#2A2A2A', borderColor: '#333' },
                       { height: createBlockHeight, opacity: createBlockOpacity, overflow: 'hidden' },
                     ]}>
                       <TextInput
-                        style={[styles.createInput, isDarkMode && { color: '#FFF', borderColor: '#444' }]}
+                        style={[
+                          styles.createInput,
+                          isDarkMode && { color: '#FFF', borderColor: '#444' },
+                        ]}
                         placeholder="Nom de la playlist..."
                         placeholderTextColor={isDarkMode ? '#666' : '#BBB'}
                         value={newPlaylistName}
@@ -359,9 +369,11 @@ export default function MusicIndex() {
                       </TouchableOpacity>
                     </Animated.View>
 
-                    {/* Bouton "Créer une playlist" */}
                     <TouchableOpacity
-                      style={[styles.createPlaylistBtn, isDarkMode && { borderColor: '#45644A' }]}
+                      style={[
+                        styles.createPlaylistBtn,
+                        isDarkMode && { borderColor: '#45644A' },
+                      ]}
                       onPress={toggleCreateInput}
                     >
                       <Ionicons
@@ -376,11 +388,13 @@ export default function MusicIndex() {
                   </View>
 
                 ) : (
-                  // ── CAS : playlists existantes ──
+                  // Playlists existantes
                   <>
-                    {/* Bouton créer une nouvelle + champ inline */}
                     <TouchableOpacity
-                      style={[styles.newPlaylistRow, isDarkMode && { borderBottomColor: '#333' }]}
+                      style={[
+                        styles.newPlaylistRow,
+                        isDarkMode && { borderBottomColor: '#333' },
+                      ]}
                       onPress={toggleCreateInput}
                     >
                       <View style={styles.newPlaylistIconWrap}>
@@ -395,7 +409,6 @@ export default function MusicIndex() {
                       </Text>
                     </TouchableOpacity>
 
-                    {/* Champ de création inline */}
                     <Animated.View style={[
                       styles.createBlockInline,
                       isDarkMode && { backgroundColor: '#2A2A2A', borderColor: '#333' },
@@ -405,7 +418,11 @@ export default function MusicIndex() {
                         <TextInput
                           style={[
                             styles.createInlineInput,
-                            isDarkMode && { color: '#FFF', borderColor: '#444', backgroundColor: '#333' },
+                            isDarkMode && {
+                              color: '#FFF',
+                              borderColor: '#444',
+                              backgroundColor: '#333',
+                            },
                           ]}
                           placeholder="Nom de la playlist..."
                           placeholderTextColor={isDarkMode ? '#666' : '#BBB'}
@@ -429,22 +446,27 @@ export default function MusicIndex() {
                       </View>
                     </Animated.View>
 
-                    {/* Liste des playlists existantes */}
                     <ScrollView style={{ maxHeight: 260 }} keyboardShouldPersistTaps="handled">
                       {playlists.map((playlist) => {
-                        const songCount = Array.isArray(playlist?.songIds) ? playlist.songIds.length : 0;
+                        const songCount = playlist.songIds.length;
                         return (
                           <TouchableOpacity
                             key={playlist.id}
-                            style={[styles.playlistItem, isDarkMode && { borderBottomColor: '#2A2A2A' }]}
+                            style={[
+                              styles.playlistItem,
+                              isDarkMode && { borderBottomColor: '#2A2A2A' },
+                            ]}
                             onPress={() => handleAddToPlaylist(playlist.id)}
                           >
                             <View style={styles.playlistItemIcon}>
                               <Ionicons name="musical-notes" size={18} color="#45644A" />
                             </View>
                             <View style={{ flex: 1 }}>
-                              <Text style={[styles.playlistItemName, isDarkMode && styles.textWhite]}>
-                                {playlist.name ?? 'Sans nom'}
+                              <Text style={[
+                                styles.playlistItemName,
+                                isDarkMode && styles.textWhite,
+                              ]}>
+                                {playlist.name}
                               </Text>
                               <Text style={styles.playlistItemCount}>
                                 {songCount} titre{songCount !== 1 ? 's' : ''}
@@ -460,10 +482,15 @@ export default function MusicIndex() {
                   </>
                 )}
 
-                {/* Bouton fermer */}
-                <TouchableOpacity style={[styles.modalClose, isDarkMode && { backgroundColor: '#2A2A2A' }]} onPress={closePlaylistModal}>
-                  <Text style={[styles.modalCloseText, isDarkMode && { color: '#888' }]}>Fermer</Text>
+                <TouchableOpacity
+                  style={[styles.modalClose, isDarkMode && { backgroundColor: '#2A2A2A' }]}
+                  onPress={closePlaylistModal}
+                >
+                  <Text style={[styles.modalCloseText, isDarkMode && { color: '#888' }]}>
+                    Fermer
+                  </Text>
                 </TouchableOpacity>
+
               </TouchableOpacity>
             </Animated.View>
           </TouchableOpacity>
@@ -474,36 +501,71 @@ export default function MusicIndex() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F3EDE3', paddingTop: StatusBar.currentHeight || 50 },
+  container: {
+    flex: 1,
+    backgroundColor: '#F3EDE3',
+    paddingTop: StatusBar.currentHeight || 50,
+  },
   bgDark: { backgroundColor: '#121212' },
   cardDark: { backgroundColor: '#1E1E1E' },
   textWhite: { color: '#FFF' },
 
   header: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 25, marginBottom: 20,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 25,
+    marginBottom: 20,
   },
-  title: { fontSize: 34, fontWeight: 'bold', color: '#45644A', letterSpacing: -1 },
+  title: {
+    fontSize: 34,
+    fontWeight: 'bold',
+    color: '#45644A',
+    letterSpacing: -1,
+  },
   subTitle: { fontSize: 14, color: '#888', marginTop: -2 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  addBtn: { backgroundColor: '#45644A', padding: 10, borderRadius: 15, elevation: 5 },
+  addBtn: {
+    backgroundColor: '#45644A',
+    padding: 10,
+    borderRadius: 15,
+    elevation: 5,
+  },
   filterBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12,
-    borderWidth: 1.5, borderColor: '#45644A',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#45644A',
   },
   filterBtnActive: { backgroundColor: '#45644A' },
   favCount: { fontSize: 13, fontWeight: '700', color: '#45644A' },
   filterBadge: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    marginHorizontal: 25, marginBottom: 12, paddingHorizontal: 12, paddingVertical: 6,
-    backgroundColor: '#E8F5E9', borderRadius: 10, alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginHorizontal: 25,
+    marginBottom: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#E8F5E9',
+    borderRadius: 10,
+    alignSelf: 'flex-start',
   },
   filterBadgeText: { fontSize: 13, color: '#45644A', fontWeight: '600' },
 
   songCard: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF',
-    marginHorizontal: 20, marginBottom: 10, padding: 10, borderRadius: 20, elevation: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF',
+    marginHorizontal: 20,
+    marginBottom: 10,
+    padding: 10,
+    borderRadius: 20,
+    elevation: 3,
   },
   songMainBtn: { flex: 1, flexDirection: 'row', alignItems: 'center' },
   songTextContainer: { flex: 1, marginLeft: 15 },
@@ -511,112 +573,207 @@ const styles = StyleSheet.create({
   songArtist: { fontSize: 12, color: '#888', marginTop: 2 },
   songActions: { flexDirection: 'row', alignItems: 'center' },
   actionBtn: { padding: 6 },
+
   emptyState: { alignItems: 'center', marginTop: 100 },
   emptyText: { color: '#999', marginTop: 15, fontSize: 16 },
 
-  // ── Modal ──
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
   modalSheet: {
-    backgroundColor: '#FFF', borderTopLeftRadius: 30, borderTopRightRadius: 30,
-    paddingHorizontal: 22, paddingBottom: 36, paddingTop: 10,
+    backgroundColor: '#FFF',
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    paddingHorizontal: 22,
+    paddingBottom: 36,
+    paddingTop: 10,
   },
   modalHandle: {
-    width: 44, height: 4, borderRadius: 2, backgroundColor: '#E0E0E0',
-    alignSelf: 'center', marginBottom: 20,
+    width: 44,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#E0E0E0',
+    alignSelf: 'center',
+    marginBottom: 20,
   },
-  modalTitle: { fontSize: 19, fontWeight: '700', color: '#1A1A1A', marginBottom: 12 },
+  modalTitle: {
+    fontSize: 19,
+    fontWeight: '700',
+    color: '#1A1A1A',
+    marginBottom: 12,
+  },
   modalSongRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    marginBottom: 20, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: '#F0F0F0',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 20,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
   },
   modalSongIcon: {
-    width: 32, height: 32, borderRadius: 8, backgroundColor: '#E8F5E9',
-    justifyContent: 'center', alignItems: 'center',
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#E8F5E9',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   modalSongName: { flex: 1, fontSize: 14, color: '#666', fontWeight: '500' },
 
-  // ── État vide ──
-  emptyPlaylistsBlock: { alignItems: 'center', paddingVertical: 8, paddingBottom: 4 },
-  emptyIllustration: {
-    width: 72, height: 72, borderRadius: 20, backgroundColor: '#E8F5E9',
-    justifyContent: 'center', alignItems: 'center', marginBottom: 14,
+  emptyPlaylistsBlock: {
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingBottom: 4,
   },
-  emptyPlaylistText: { fontSize: 17, fontWeight: '700', color: '#333', marginBottom: 6 },
+  emptyIllustration: {
+    width: 72,
+    height: 72,
+    borderRadius: 20,
+    backgroundColor: '#E8F5E9',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  emptyPlaylistText: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 6,
+  },
   emptyPlaylistSub: {
-    fontSize: 13, color: '#AAA', textAlign: 'center',
-    lineHeight: 18, marginBottom: 20, paddingHorizontal: 10,
+    fontSize: 13,
+    color: '#AAA',
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 20,
+    paddingHorizontal: 10,
   },
 
-  // ── Bloc création (état vide) ──
   createBlock: {
-    width: '100%', backgroundColor: '#F8F9FA', borderRadius: 16,
-    borderWidth: 1, borderColor: '#E8E8E8', padding: 14, marginBottom: 12,
+    width: '100%',
+    backgroundColor: '#F8F9FA',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E8E8E8',
+    padding: 14,
+    marginBottom: 12,
   },
   createInput: {
-    borderWidth: 1, borderColor: '#E0E0E0', borderRadius: 12,
-    paddingHorizontal: 14, paddingVertical: 10, fontSize: 15,
-    backgroundColor: '#FFF', marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 15,
+    backgroundColor: '#FFF',
+    marginBottom: 10,
   },
   createConfirmBtn: {
-    backgroundColor: '#45644A', borderRadius: 12, flexDirection: 'row',
-    alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 11,
+    backgroundColor: '#45644A',
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 11,
   },
   createConfirmText: { color: '#FFF', fontWeight: '700', fontSize: 14 },
-
   createPlaylistBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    borderWidth: 1.5, borderColor: '#45644A', borderRadius: 14,
-    paddingHorizontal: 20, paddingVertical: 12, marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1.5,
+    borderColor: '#45644A',
+    borderRadius: 14,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    marginTop: 4,
   },
   createPlaylistBtnText: { color: '#45644A', fontWeight: '700', fontSize: 15 },
 
-  // ── Bouton "Nouvelle playlist" en haut de liste ──
   newPlaylistRow: {
-    flexDirection: 'row', alignItems: 'center', paddingVertical: 14,
-    borderBottomWidth: 1, borderBottomColor: '#F0F0F0', gap: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+    gap: 12,
   },
   newPlaylistIconWrap: {
-    width: 38, height: 38, borderRadius: 10, backgroundColor: '#E8F5E9',
-    justifyContent: 'center', alignItems: 'center',
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#E8F5E9',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   newPlaylistLabel: { fontSize: 15, fontWeight: '600', color: '#45644A' },
 
-  // ── Champ inline (liste non vide) ──
   createBlockInline: {
-    backgroundColor: '#F8F9FA', borderRadius: 14,
-    borderWidth: 1, borderColor: '#E8E8E8',
-    paddingHorizontal: 12, paddingVertical: 10, marginBottom: 4,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E8E8E8',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 4,
   },
   createInlineRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   createInlineInput: {
-    flex: 1, borderWidth: 1, borderColor: '#E0E0E0', borderRadius: 10,
-    paddingHorizontal: 12, paddingVertical: 9, fontSize: 14,
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    fontSize: 14,
     backgroundColor: '#FFF',
   },
   createInlineBtn: {
-    width: 40, height: 40, borderRadius: 10, backgroundColor: '#45644A',
-    justifyContent: 'center', alignItems: 'center',
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: '#45644A',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 
-  // ── Items playlist ──
   playlistItem: {
-    flexDirection: 'row', alignItems: 'center', paddingVertical: 13,
-    borderBottomWidth: 1, borderBottomColor: '#F5F5F5',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 13,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F5F5F5',
   },
   playlistItemIcon: {
-    width: 40, height: 40, borderRadius: 10, backgroundColor: '#E8F5E9',
-    justifyContent: 'center', alignItems: 'center', marginRight: 14,
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: '#E8F5E9',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
   },
   playlistItemName: { fontSize: 15, fontWeight: '600', color: '#1A1A1A' },
   playlistItemCount: { fontSize: 12, color: '#AAA', marginTop: 1 },
   addToListBtn: {
-    width: 32, height: 32, borderRadius: 8, backgroundColor: '#E8F5E9',
-    justifyContent: 'center', alignItems: 'center',
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#E8F5E9',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 
   modalClose: {
-    marginTop: 16, paddingVertical: 14, alignItems: 'center',
-    backgroundColor: '#F5F5F5', borderRadius: 14,
+    marginTop: 16,
+    paddingVertical: 14,
+    alignItems: 'center',
+    backgroundColor: '#F5F5F5',
+    borderRadius: 14,
   },
   modalCloseText: { fontSize: 15, fontWeight: '600', color: '#777' },
 });
